@@ -1,0 +1,6 @@
+streamlit
+anthropic
+openai
+pinecone
+cohere
+python-dotenv

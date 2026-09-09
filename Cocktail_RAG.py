@@ -233,7 +233,7 @@ Keep it warm and personal. Respond in the same language as the question. Under 3
 # Header
 st.title("🎩 Jack's Vintage Cocktail Bar")
 st.markdown(
-    "*Since 1914 — Ask Jack for expert cocktail recommendations from Jacques Straub's classic guide.*"
+    "*From 1914 to 2010 — Ask Jack for expert cocktail recommendations from two classic bartending guides*."
 )
 st.divider()
 

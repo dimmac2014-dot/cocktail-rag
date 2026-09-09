@@ -244,8 +244,9 @@ with st.sidebar:
         """
         This app uses a **RAG pipeline** built on:
 
-        - 📖 Jacques Straub's **"Drinks"** (1914)
-        - 🧠 **527 recipes** with rich metadata
+        - 📖 Jacques Straub's **"Drinks"** (1914) - 527 recipes
+        - 🍹 **Tales of the Cocktail** Recipe Book (2010) — 652 recipes
+        - 🧠 **1.179 recipes** with rich metadata
         - 🎯 Semantic search + reranking
         - 🎩 Jack, your AI bartender
 

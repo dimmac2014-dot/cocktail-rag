@@ -223,14 +223,49 @@ def convert_units(amount: float, from_unit: str, to_unit: str):
 # ═══════════════════════════════════════════════════════════════
 
 # Pinecone metadata δεν περιέχει "glassware" (δεν είχε ανέβει κατά το ingest),
-# οπότε το μαντεύουμε από το "type" -- πεδίο που ΥΠΑΡΧΕΙ σε κάθε recipe.
-# Καθαρός mapping, μηδενικό κόστος, καμία αλλαγή στα δεδομένα του Pinecone.
+# οπότε το μαντεύουμε. Το "type" μόνο του δεν αρκεί -- σχεδόν όλα τα recipes
+# είναι type="cocktail", άρα καταλήγουν όλα στο ίδιο ποτήρι (coupe). Γι' αυτό
+# ελέγχουμε πρώτα το ΟΝΟΜΑ (πιο αξιόπιστο -- πολλά κλασικά ονόματα υπονοούν
+# άμεσα το σερβίρισμα, π.χ. "Collins", "Old Fashioned", "Julep"), μετά το
+# "type", και τέλος το "method" (shaken/stirred/built/blended) πριν καταλήξουμε
+# σε coupe. Καθαρός mapping, μηδενικό κόστος, καμία αλλαγή στα δεδομένα του Pinecone.
+
+GLASSWARE_BY_NAME_KEYWORD = {
+    "collins": "tall Collins glass",
+    "highball": "highball glass",
+    "buck": "highball glass",
+    "mule": "copper mug",
+    "old fashioned": "old-fashioned (rocks) glass",
+    "old-fashioned": "old-fashioned (rocks) glass",
+    "smash": "old-fashioned (rocks) glass",
+    "julep": "silver julep cup",
+    "flip": "small flip glass",
+    "toddy": "footed toddy mug",
+    "punch": "punch bowl cup",
+    "cobbler": "goblet",
+    "fizz": "highball glass",
+    "rickey": "highball glass",
+    "cooler": "highball glass",
+    "frappe": "old-fashioned glass filled with crushed ice",
+    "frappé": "old-fashioned glass filled with crushed ice",
+    "martini": "martini glass",
+    "margarita": "margarita glass",
+    "negroni": "old-fashioned (rocks) glass",
+    "spritz": "wine glass",
+    "mojito": "highball glass",
+    "colada": "hurricane glass",
+    "daisy": "coupe",
+    "sour": "coupe",
+    "manhattan": "coupe",
+    "gimlet": "coupe",
+}
+
 GLASSWARE_BY_TYPE = {
     "cocktail": "coupe",
     "punch": "punch bowl cup",
     "cobbler": "goblet",
-    "cooler": "highball",
-    "fizz": "highball",
+    "cooler": "highball glass",
+    "fizz": "highball glass",
     "toddy": "footed toddy mug",
     "frappé": "old-fashioned glass filled with crushed ice",
     "frappe": "old-fashioned glass filled with crushed ice",
@@ -241,12 +276,26 @@ GLASSWARE_BY_TYPE = {
     "unknown": "coupe",
 }
 
+GLASSWARE_BY_METHOD = {
+    "built": "old-fashioned (rocks) glass",
+    "shaken": "coupe",
+    "stirred": "coupe",
+    "blended": "hurricane glass",
+    "muddled": "old-fashioned (rocks) glass",
+}
 
-def infer_glassware(recipe_type: str | None) -> str:
-    """Επιστρέφει κατάλληλο ποτήρι με βάση το type του recipe (fallback: coupe)."""
-    if not recipe_type:
-        return "coupe"
-    return GLASSWARE_BY_TYPE.get(recipe_type.lower(), "coupe")
+
+def infer_glassware(recipe_name: str | None, recipe_type: str | None = None, method: str | None = None) -> str:
+    """Μαντεύει κατάλληλο ποτήρι: πρώτα από το όνομα, μετά type, μετά method, αλλιώς coupe."""
+    name_lower = (recipe_name or "").lower()
+    for keyword, glass in GLASSWARE_BY_NAME_KEYWORD.items():
+        if keyword in name_lower:
+            return glass
+    if recipe_type and recipe_type.lower() in GLASSWARE_BY_TYPE:
+        return GLASSWARE_BY_TYPE[recipe_type.lower()]
+    if method and method.lower() in GLASSWARE_BY_METHOD:
+        return GLASSWARE_BY_METHOD[method.lower()]
+    return "coupe"
 
 
 def generate_cocktail_image(recipe_name: str, glassware: str | None = None):
@@ -641,7 +690,8 @@ if result:
         with st.spinner("🎨 Painting a vintage-style illustration..."):
             image_bytes, image_error = generate_cocktail_image(
                 top_pick["name"],
-                top_pick.get("glassware") or infer_glassware(top_pick.get("type")),
+                top_pick.get("glassware")
+                or infer_glassware(top_pick.get("name"), top_pick.get("type"), top_pick.get("method")),
             )
             st.session_state["generated_image_bytes"] = image_bytes
             st.session_state["generated_image_error"] = image_error

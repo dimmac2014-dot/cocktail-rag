@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import base64
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -215,6 +216,38 @@ def convert_units(amount: float, from_unit: str, to_unit: str):
         return None
     ml = amount * UNIT_TO_ML[from_unit]
     return ml / UNIT_TO_ML[to_unit]
+
+
+# ═══════════════════════════════════════════════════════════════
+# IMAGE GENERATION (OpenAI gpt-image-1 -- επί πληρωμή, μικρό κόστος/εικόνα)
+# ═══════════════════════════════════════════════════════════════
+
+def generate_cocktail_image(recipe_name: str, glassware: str | None = None):
+    """
+    Δημιουργεί vintage-style εικόνα του cocktail μέσω OpenAI gpt-image-1.
+    Επιστρέφει (image_bytes, None) σε επιτυχία, ή (None, error_message) σε αποτυχία.
+    Το gpt-image-1 επιστρέφει πάντα base64 (όχι URL), γι' αυτό το αποκωδικοποιούμε
+    σε bytes -- το st.image() δέχεται bytes απευθείας.
+    ΠΡΟΣΟΧΗ: κάθε κλήση χρεώνεται (μικρό αλλά υπαρκτό κόστος σε "low" ποιότητα) --
+    γι' αυτό καλείται μόνο όταν ο χρήστης πατήσει ρητά το σχετικό κουμπί, ποτέ αυτόματα.
+    """
+    prompt = (
+        f"A vintage 1920s art-deco style illustration of a '{recipe_name}' cocktail, "
+        f"served in a {glassware or 'coupe'} glass, elegant hand-drawn poster art, "
+        f"warm sepia and gold tones, classic speakeasy bar atmosphere, no text, no words, no lettering"
+    )
+    try:
+        response = clients["openai"].images.generate(
+            model="gpt-image-1",
+            prompt=prompt,
+            size="1024x1024",
+            quality="low",
+            n=1,
+        )
+        image_bytes = base64.b64decode(response.data[0].b64_json)
+        return image_bytes, None
+    except Exception as e:
+        return None, str(e)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -476,9 +509,9 @@ with st.sidebar:
             format_func=lambda u: UNIT_LABELS[u], key="conv_to",
         )
 
-        result = convert_units(conv_amount, conv_from, conv_to)
-        if result is not None:
-            st.success(f"{conv_amount:g} {UNIT_LABELS[conv_from]} = **{result:.2f} {UNIT_LABELS[conv_to]}**")
+        conv_result = convert_units(conv_amount, conv_from, conv_to)
+        if conv_result is not None:
+            st.success(f"{conv_amount:g} {UNIT_LABELS[conv_from]} = **{conv_result:.2f} {UNIT_LABELS[conv_to]}**")
 
     st.divider()
     st.caption("Powered by Anthropic • OpenAI • Pinecone • Cohere • LlamaCloud")
@@ -500,11 +533,6 @@ if ask_button and question:
     with st.spinner("🧠 Understanding your request..."):
         search_query, active_filters, filter_usage = parse_query_filters(question)
 
-    # Show filters
-    if active_filters:
-        filter_display = " | ".join([f"**{k}**: `{v}`" for k, v in active_filters.items()])
-        st.info(f"🎯 Detected filters: {filter_display}")
-
     # Search + rerank
     with st.spinner("🔍 Searching Jack's recipe collection..."):
         pinecone_filter = build_pinecone_filter(active_filters)
@@ -521,49 +549,104 @@ if ask_button and question:
             reranked = hybrid_search_with_rerank(search_query, initial_top_k=30, final_top_k=5)
 
     if not reranked:
+        st.session_state["result"] = None
         st.error("😔 Sorry, no matching recipes found.")
     else:
         # Weather context (προαιρετικό — αν αποτύχει, απλά αγνοείται)
         weather = get_weather(st.session_state.get("weather_city", "Athens"))
-        if weather:
-            st.caption(f"🌤️ {weather['city']}: {weather['temperature']}°C, {weather['description']}")
 
         # Datetime context (χρησιμοποιεί την τοπική ώρα της πόλης αν έχουμε weather, αλλιώς ώρα server)
         dt_context = get_datetime_context(weather.get("local_time") if weather else None)
-        occasion_badge = f" • 🎉 {dt_context['special_occasion']}" if dt_context["special_occasion"] else ""
-        st.caption(f"🕒 {dt_context['day_of_week']} {dt_context['time_of_day']}, {dt_context['season']}{occasion_badge}")
 
         # Generate response
         with st.spinner("🎩 Jack is thinking..."):
             answer, gen_usage = generate_bartender_response(question, reranked, weather, dt_context)
 
-        # Display answer
-        st.markdown("### 🎩 Jack says:")
-        st.markdown(answer)
-
-        st.divider()
-
-        # Retrieved recipes (expandable)
-        with st.expander(f"📚 View the {len(reranked)} recipes Jack considered"):
-            for i, item in enumerate(reranked, 1):
-                meta = item['match']['metadata']
-                st.markdown(f"**{i}. {meta['name']}**")
-                st.caption(
-                    f"Type: {meta['type']} | Base: {meta['base_spirit']} | "
-                    f"Method: {meta['method']} | Rerank score: {item['rerank_score']:.3f}"
-                )
-                st.code(meta['text'], language=None)
-                st.markdown("---")
-
-        # Cost tracker
-        input_tokens = filter_usage.input_tokens + gen_usage.input_tokens
-        output_tokens = filter_usage.output_tokens + gen_usage.output_tokens
-        total_cost = (input_tokens * 0.80 + output_tokens * 4.00) / 1_000_000
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("💰 Cost", f"${total_cost:.4f}")
-        col2.metric("📥 Input tokens", input_tokens)
-        col3.metric("📤 Output tokens", output_tokens)
+        # Αποθηκεύουμε ΟΛΟ το αποτέλεσμα στο session_state, ώστε να "επιβιώνει" σε reruns
+        # που προκαλούνται από άλλα κουμπιά (π.χ. "Generate Image") -- το Streamlit ξανατρέχει
+        # ολόκληρο το script σε κάθε interaction, οπότε χωρίς αυτό η απάντηση θα εξαφανιζόταν.
+        st.session_state["result"] = {
+            "active_filters": active_filters,
+            "reranked": reranked,
+            "weather": weather,
+            "dt_context": dt_context,
+            "answer": answer,
+            "filter_usage": filter_usage,
+            "gen_usage": gen_usage,
+        }
+        # Νέα ερώτηση -> καθαρίζουμε τυχόν προηγούμενη εικόνα
+        st.session_state["generated_image_bytes"] = None
+        st.session_state["generated_image_error"] = None
 
 elif ask_button and not question:
     st.warning("👆 Please enter a question first!")
+
+# Render το αποθηκευμένο αποτέλεσμα (αν υπάρχει) -- ανεξάρτητα από το αν αυτό το rerun
+# προκλήθηκε από το "Ask Jack" ή από κάποιο άλλο κουμπί (π.χ. "Generate Image")
+result = st.session_state.get("result")
+if result:
+    if result["active_filters"]:
+        filter_display = " | ".join([f"**{k}**: `{v}`" for k, v in result["active_filters"].items()])
+        st.info(f"🎯 Detected filters: {filter_display}")
+
+    weather = result["weather"]
+    if weather:
+        st.caption(f"🌤️ {weather['city']}: {weather['temperature']}°C, {weather['description']}")
+
+    dt_context = result["dt_context"]
+    occasion_badge = f" • 🎉 {dt_context['special_occasion']}" if dt_context["special_occasion"] else ""
+    st.caption(f"🕒 {dt_context['day_of_week']} {dt_context['time_of_day']}, {dt_context['season']}{occasion_badge}")
+
+    reranked = result["reranked"]
+
+    # Display answer
+    st.markdown("### 🎩 Jack says:")
+    st.markdown(result["answer"])
+
+    # Optional image generation (opt-in only -- small but real cost via OpenAI gpt-image-1)
+    top_pick = reranked[0]['match']['metadata']
+    col_img1, col_img2 = st.columns([1, 3])
+    with col_img1:
+        generate_image_clicked = st.button("🎨 Generate Image", key="generate_image_btn")
+    if generate_image_clicked:
+        with st.spinner("🎨 Painting a vintage-style illustration..."):
+            image_bytes, image_error = generate_cocktail_image(
+                top_pick["name"], top_pick.get("glassware")
+            )
+            st.session_state["generated_image_bytes"] = image_bytes
+            st.session_state["generated_image_error"] = image_error
+
+    if st.session_state.get("generated_image_bytes"):
+        st.image(
+            st.session_state["generated_image_bytes"],
+            caption=f"A vintage take on the {top_pick['name']}",
+            width=400,
+        )
+    elif st.session_state.get("generated_image_error"):
+        st.warning(f"Couldn't generate the image right now ({st.session_state['generated_image_error']}).")
+
+    st.divider()
+
+    # Retrieved recipes (expandable)
+    with st.expander(f"📚 View the {len(reranked)} recipes Jack considered"):
+        for i, item in enumerate(reranked, 1):
+            meta = item['match']['metadata']
+            st.markdown(f"**{i}. {meta['name']}**")
+            st.caption(
+                f"Type: {meta['type']} | Base: {meta['base_spirit']} | "
+                f"Method: {meta['method']} | Rerank score: {item['rerank_score']:.3f}"
+            )
+            st.code(meta['text'], language=None)
+            st.markdown("---")
+
+    # Cost tracker
+    filter_usage = result["filter_usage"]
+    gen_usage = result["gen_usage"]
+    input_tokens = filter_usage.input_tokens + gen_usage.input_tokens
+    output_tokens = filter_usage.output_tokens + gen_usage.output_tokens
+    total_cost = (input_tokens * 0.80 + output_tokens * 4.00) / 1_000_000
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Cost", f"${total_cost:.4f}")
+    col2.metric("📥 Input tokens", input_tokens)
+    col3.metric("📤 Output tokens", output_tokens)

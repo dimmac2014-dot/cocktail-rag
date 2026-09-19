@@ -576,6 +576,52 @@ Keep it warm and personal. Respond in the same language as the question. Under 3
 
 
 # ═══════════════════════════════════════════════════════════════
+# ESTIMATE ABV (Claude Haiku διαβάζει το ελεύθερο κείμενο της συνταγής --
+# επί πληρωμή αλλά αμελητέο κόστος, ~$0.0002 ανά κλήση, ίδιο μέγεθος με το filter extraction)
+# ═══════════════════════════════════════════════════════════════
+
+def estimate_abv(recipe_name: str, recipe_text: str):
+    """
+    Ζητάει από τον Claude Haiku να διαβάσει το (συχνά παλιομοδίτικο, ελεύθερο) κείμενο
+    μιας συνταγής -- π.χ. "1 wine-glass of whiskey, 2 dashes bitters" -- και να εκτιμήσει
+    το τελικό % αλκοόλ (ABV) του έτοιμου, αραιωμένου ποτού.
+    Επιστρέφει (dict, usage) σε επιτυχία, ή (None, usage) αν αποτύχει το parsing.
+    ΠΡΟΣΟΧΗ: μικρή κλήση Claude Haiku -- καλείται μόνο όταν ο χρήστης πατήσει ρητά
+    το σχετικό κουμπί, ποτέ αυτόματα.
+    """
+    prompt = f"""You are an expert bartender estimating the alcohol content of a classic cocktail.
+
+Recipe name: "{recipe_name}"
+Recipe text (may use old-fashioned units like wine-glass, jigger, pony, dash):
+{recipe_text}
+
+Estimate the final drink's overall ABV (alcohol by volume, as a percentage of the
+finished, diluted drink) -- account for ice melt/dilution if shaken or stirred, and
+remember that mixers, juices, syrups, and garnishes add no alcohol. Use standard
+ABV knowledge for common spirits/liqueurs (e.g. gin/whiskey/rum/brandy ~40%,
+vermouth ~15-18%, most liqueurs ~20-30%, wine ~12-14%, bitters ~40-50% but used
+only in dashes so effectively negligible).
+
+Return ONLY a JSON object with this shape:
+{{
+  "estimated_abv_percent": <number, one decimal place>,
+  "confidence": "high" | "medium" | "low",
+  "note": "<one short sentence explaining the estimate or any uncertainty>"
+}}"""
+
+    response = clients["anthropic"].messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    try:
+        return parse_claude_json(response.content[0].text), response.usage
+    except Exception:
+        return None, response.usage
+
+
+# ═══════════════════════════════════════════════════════════════
 # UI
 # ═══════════════════════════════════════════════════════════════
 
@@ -699,6 +745,8 @@ if ask_button and question:
         st.session_state["generated_image_error"] = None
         st.session_state["generated_audio_bytes"] = None
         st.session_state["generated_audio_error"] = None
+        st.session_state["abv_result"] = None
+        st.session_state["abv_error"] = None
 
 elif ask_button and not question:
     st.warning("👆 Please enter a question first!")
@@ -727,12 +775,15 @@ if result:
 
     # Optional image generation (opt-in only -- small but real cost via OpenAI gpt-image-1)
     # + optional text-to-speech (opt-in only -- small but real cost via OpenAI tts-1)
+    # + optional ABV estimate (opt-in only -- tiny cost via Claude Haiku)
     top_pick = reranked[0]['match']['metadata']
-    col_img1, col_img2, col_img3 = st.columns([1, 1, 3])
+    col_img1, col_img2, col_img3, col_img4 = st.columns([1, 1, 1, 2])
     with col_img1:
         generate_image_clicked = st.button("🎨 Generate Image", key="generate_image_btn")
     with col_img2:
         generate_speech_clicked = st.button("🔊 Listen to Jack", key="generate_speech_btn")
+    with col_img3:
+        estimate_abv_clicked = st.button("🥃 Estimate ABV", key="estimate_abv_btn")
 
     if generate_speech_clicked:
         with st.spinner("🔊 Recording Jack's voice..."):
@@ -744,6 +795,21 @@ if result:
         st.audio(st.session_state["generated_audio_bytes"], format="audio/mp3")
     elif st.session_state.get("generated_audio_error"):
         st.warning(f"Couldn't generate the audio right now ({st.session_state['generated_audio_error']}).")
+
+    if estimate_abv_clicked:
+        with st.spinner("🥃 Doing the math..."):
+            abv_result, abv_usage = estimate_abv(top_pick["name"], top_pick["text"])
+            st.session_state["abv_result"] = abv_result
+            st.session_state["abv_error"] = None if abv_result else "couldn't parse the recipe"
+
+    if st.session_state.get("abv_result"):
+        abv = st.session_state["abv_result"]
+        st.info(
+            f"🥃 Estimated ABV of the **{top_pick['name']}**: **{abv['estimated_abv_percent']}%** "
+            f"(confidence: {abv['confidence']}). {abv['note']}"
+        )
+    elif st.session_state.get("abv_error"):
+        st.warning(f"Couldn't estimate the ABV right now ({st.session_state['abv_error']}).")
 
     if generate_image_clicked:
         with st.spinner("🎨 Painting a vintage-style illustration..."):

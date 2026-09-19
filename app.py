@@ -222,6 +222,33 @@ def convert_units(amount: float, from_unit: str, to_unit: str):
 # IMAGE GENERATION (OpenAI gpt-image-1 -- επί πληρωμή, μικρό κόστος/εικόνα)
 # ═══════════════════════════════════════════════════════════════
 
+# Pinecone metadata δεν περιέχει "glassware" (δεν είχε ανέβει κατά το ingest),
+# οπότε το μαντεύουμε από το "type" -- πεδίο που ΥΠΑΡΧΕΙ σε κάθε recipe.
+# Καθαρός mapping, μηδενικό κόστος, καμία αλλαγή στα δεδομένα του Pinecone.
+GLASSWARE_BY_TYPE = {
+    "cocktail": "coupe",
+    "punch": "punch bowl cup",
+    "cobbler": "goblet",
+    "cooler": "highball",
+    "fizz": "highball",
+    "toddy": "footed toddy mug",
+    "frappé": "old-fashioned glass filled with crushed ice",
+    "frappe": "old-fashioned glass filled with crushed ice",
+    "cup": "silver julep cup",
+    "shot": "shot glass",
+    "sour": "coupe",
+    "other": "coupe",
+    "unknown": "coupe",
+}
+
+
+def infer_glassware(recipe_type: str | None) -> str:
+    """Επιστρέφει κατάλληλο ποτήρι με βάση το type του recipe (fallback: coupe)."""
+    if not recipe_type:
+        return "coupe"
+    return GLASSWARE_BY_TYPE.get(recipe_type.lower(), "coupe")
+
+
 def generate_cocktail_image(recipe_name: str, glassware: str | None = None):
     """
     Δημιουργεί vintage-style εικόνα του cocktail μέσω OpenAI gpt-image-1.
@@ -611,7 +638,8 @@ if result:
     if generate_image_clicked:
         with st.spinner("🎨 Painting a vintage-style illustration..."):
             image_bytes, image_error = generate_cocktail_image(
-                top_pick["name"], top_pick.get("glassware")
+                top_pick["name"],
+                top_pick.get("glassware") or infer_glassware(top_pick.get("type")),
             )
             st.session_state["generated_image_bytes"] = image_bytes
             st.session_state["generated_image_error"] = image_error

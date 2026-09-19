@@ -259,9 +259,11 @@ def generate_cocktail_image(recipe_name: str, glassware: str | None = None):
     γι' αυτό καλείται μόνο όταν ο χρήστης πατήσει ρητά το σχετικό κουμπί, ποτέ αυτόματα.
     """
     prompt = (
-        f"A vintage 1920s art-deco style illustration of a '{recipe_name}' cocktail, "
-        f"served in a {glassware or 'coupe'} glass, elegant hand-drawn poster art, "
-        f"warm sepia and gold tones, classic speakeasy bar atmosphere, no text, no words, no lettering"
+        f"A professional, photorealistic photograph of a '{recipe_name}' cocktail, "
+        f"served in a {glassware or 'coupe'} glass, on a dark polished wooden bar counter, "
+        f"soft moody bar lighting, shallow depth of field, garnish clearly visible, "
+        f"shot on a DSLR camera, high detail, realistic glass reflections and condensation, "
+        f"no text, no words, no lettering"
     )
     try:
         response = clients["openai"].images.generate(

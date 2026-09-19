@@ -329,6 +329,48 @@ def generate_cocktail_image(recipe_name: str, glassware: str | None = None):
 
 
 # ═══════════════════════════════════════════════════════════════
+# TEXT TO SPEECH (OpenAI tts-1 -- επί πληρωμή, πολύ μικρό κόστος: ~$0.015 / 1.000 χαρακτήρες,
+# δηλαδή μια τυπική απάντηση του Jack ~1.500 χαρακτήρων κοστίζει περίπου $0.02)
+# ═══════════════════════════════════════════════════════════════
+
+# Emoji + markdown σύμβολα που υπάρχουν στην απάντηση του Jack (🍸 📖 🥃 🎭 κ.λπ., **bold**)
+# δεν πρέπει να διαβαστούν φωναχτά -- τα αφαιρούμε πριν στείλουμε το κείμενο στο TTS.
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002600-\U000027BF"
+    "\U0001F1E6-\U0001F1FF"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_markdown_for_speech(text: str) -> str:
+    """Αφαιρεί emoji και markdown σύμβολα ώστε η ομιλία να ακούγεται φυσικά."""
+    cleaned = _EMOJI_PATTERN.sub("", text)
+    cleaned = re.sub(r"[*_#`]", "", cleaned)
+    return cleaned.strip()
+
+
+def generate_speech(text: str):
+    """
+    Μετατρέπει την απάντηση του Jack σε ομιλία μέσω OpenAI tts-1.
+    Επιστρέφει (audio_bytes, None) σε επιτυχία, ή (None, error_message) σε αποτυχία.
+    ΠΡΟΣΟΧΗ: κάθε κλήση χρεώνεται (πολύ μικρό αλλά υπαρκτό κόστος) --
+    γι' αυτό καλείται μόνο όταν ο χρήστης πατήσει ρητά το σχετικό κουμπί, ποτέ αυτόματα.
+    """
+    try:
+        response = clients["openai"].audio.speech.create(
+            model="tts-1",
+            voice="onyx",
+            input=strip_markdown_for_speech(text),
+        )
+        return response.content, None
+    except Exception as e:
+        return None, str(e)
+
+
+# ═══════════════════════════════════════════════════════════════
 # PASSWORD GATE
 # ═══════════════════════════════════════════════════════════════
 
@@ -652,9 +694,11 @@ if ask_button and question:
             "filter_usage": filter_usage,
             "gen_usage": gen_usage,
         }
-        # Νέα ερώτηση -> καθαρίζουμε τυχόν προηγούμενη εικόνα
+        # Νέα ερώτηση -> καθαρίζουμε τυχόν προηγούμενη εικόνα/ήχο
         st.session_state["generated_image_bytes"] = None
         st.session_state["generated_image_error"] = None
+        st.session_state["generated_audio_bytes"] = None
+        st.session_state["generated_audio_error"] = None
 
 elif ask_button and not question:
     st.warning("👆 Please enter a question first!")
@@ -682,10 +726,25 @@ if result:
     st.markdown(result["answer"])
 
     # Optional image generation (opt-in only -- small but real cost via OpenAI gpt-image-1)
+    # + optional text-to-speech (opt-in only -- small but real cost via OpenAI tts-1)
     top_pick = reranked[0]['match']['metadata']
-    col_img1, col_img2 = st.columns([1, 3])
+    col_img1, col_img2, col_img3 = st.columns([1, 1, 3])
     with col_img1:
         generate_image_clicked = st.button("🎨 Generate Image", key="generate_image_btn")
+    with col_img2:
+        generate_speech_clicked = st.button("🔊 Listen to Jack", key="generate_speech_btn")
+
+    if generate_speech_clicked:
+        with st.spinner("🔊 Recording Jack's voice..."):
+            audio_bytes, audio_error = generate_speech(result["answer"])
+            st.session_state["generated_audio_bytes"] = audio_bytes
+            st.session_state["generated_audio_error"] = audio_error
+
+    if st.session_state.get("generated_audio_bytes"):
+        st.audio(st.session_state["generated_audio_bytes"], format="audio/mp3")
+    elif st.session_state.get("generated_audio_error"):
+        st.warning(f"Couldn't generate the audio right now ({st.session_state['generated_audio_error']}).")
+
     if generate_image_clicked:
         with st.spinner("🎨 Painting a vintage-style illustration..."):
             image_bytes, image_error = generate_cocktail_image(

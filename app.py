@@ -111,6 +111,47 @@ def get_weather(city: str):
 
 
 # ═══════════════════════════════════════════════════════════════
+# UNIT CONVERTER (bartending units — χωρίς API, μηδενικό κόστος)
+# ═══════════════════════════════════════════════════════════════
+
+# Όλα μετατρέπονται μέσω κοινής βάσης: χιλιοστόλιτρα (ml).
+# Οι παλιές μονάδες (jigger, pony, dash, wine glass) είναι ιστορικά bar
+# standards -- οι τιμές παρακάτω είναι οι πιο συνηθισμένες σύγχρονες συμβάσεις.
+UNIT_TO_ML = {
+    "ml": 1.0,
+    "cl": 10.0,
+    "l": 1000.0,
+    "oz": 29.5735,       # fluid ounce (US)
+    "jigger": 44.36,     # 1.5 oz -- ο πιο κοινός σύγχρονος ορισμός
+    "pony": 29.5735,     # 1 oz
+    "dash": 0.92,        # ≈ 1/32 oz -- κατά προσέγγιση, διαφέρει ανά μπάρμαν
+    "tsp": 5.0,           # teaspoon
+    "tbsp": 15.0,         # tablespoon
+    "cup": 236.588,
+    "wine_glass": 59.15,  # ≈ 2 oz, ιστορικό bar measure -- κατά προσέγγιση
+}
+
+UNIT_LABELS = {
+    "ml": "ml", "cl": "cl", "l": "λίτρα", "oz": "oz (fl. ounce)",
+    "jigger": "jigger", "pony": "pony", "dash": "dash",
+    "tsp": "τσαγιού (tsp)", "tbsp": "σούπας (tbsp)", "cup": "cup",
+    "wine_glass": "wine glass (ιστορικό)",
+}
+
+
+def convert_units(amount: float, from_unit: str, to_unit: str):
+    """
+    Μετατρέπει ποσότητα μεταξύ bartending μονάδων (oz, ml, cl, jigger, pony,
+    dash, tsp, tbsp, cup, wine_glass). Επιστρέφει float ή None αν η μονάδα
+    είναι άγνωστη. Καθαρός υπολογισμός -- όχι API call, μηδενικό κόστος.
+    """
+    if from_unit not in UNIT_TO_ML or to_unit not in UNIT_TO_ML:
+        return None
+    ml = amount * UNIT_TO_ML[from_unit]
+    return ml / UNIT_TO_ML[to_unit]
+
+
+# ═══════════════════════════════════════════════════════════════
 # PASSWORD GATE
 # ═══════════════════════════════════════════════════════════════
 
@@ -341,6 +382,26 @@ with st.sidebar:
         value="Athens",
         key="weather_city",
     )
+
+    st.divider()
+    with st.expander("🥄 Μετατροπέας Μονάδων"):
+        st.caption("Χρήσιμο για τις παλιές μονάδες του 1914 (jigger, pony, dash...)")
+        unit_keys = list(UNIT_TO_ML.keys())
+
+        conv_amount = st.number_input("Ποσότητα", min_value=0.0, value=1.0, step=0.5, key="conv_amount")
+        conv_from = st.selectbox(
+            "Από", unit_keys, index=unit_keys.index("jigger"),
+            format_func=lambda u: UNIT_LABELS[u], key="conv_from",
+        )
+        conv_to = st.selectbox(
+            "Σε", unit_keys, index=unit_keys.index("ml"),
+            format_func=lambda u: UNIT_LABELS[u], key="conv_to",
+        )
+
+        result = convert_units(conv_amount, conv_from, conv_to)
+        if result is not None:
+            st.success(f"{conv_amount:g} {UNIT_LABELS[conv_from]} = **{result:.2f} {UNIT_LABELS[conv_to]}**")
+
     st.divider()
     st.caption("Powered by Anthropic • OpenAI • Pinecone • Cohere • LlamaCloud")
 

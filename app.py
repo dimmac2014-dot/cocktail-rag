@@ -198,10 +198,10 @@ UNIT_TO_ML = {
 }
 
 UNIT_LABELS = {
-    "ml": "ml", "cl": "cl", "l": "λίτρα", "oz": "oz (fl. ounce)",
+    "ml": "ml", "cl": "cl", "l": "liters", "oz": "oz (fl. ounce)",
     "jigger": "jigger", "pony": "pony", "dash": "dash",
-    "tsp": "τσαγιού (tsp)", "tbsp": "σούπας (tbsp)", "cup": "cup",
-    "wine_glass": "wine glass (ιστορικό)",
+    "tsp": "teaspoon (tsp)", "tbsp": "tablespoon (tbsp)", "cup": "cup",
+    "wine_glass": "wine glass (historical)",
 }
 
 
@@ -462,17 +462,17 @@ with st.sidebar:
     )
 
     st.divider()
-    with st.expander("🥄 Μετατροπέας Μονάδων"):
-        st.caption("Χρήσιμο για τις παλιές μονάδες του 1914 (jigger, pony, dash...)")
+    with st.expander("🥄 Unit Converter"):
+        st.caption("Handy for the 1914 book's old-style measurements (jigger, pony, dash...)")
         unit_keys = list(UNIT_TO_ML.keys())
 
-        conv_amount = st.number_input("Ποσότητα", min_value=0.0, value=1.0, step=0.5, key="conv_amount")
+        conv_amount = st.number_input("Amount", min_value=0.0, value=1.0, step=0.5, key="conv_amount")
         conv_from = st.selectbox(
-            "Από", unit_keys, index=unit_keys.index("jigger"),
+            "From", unit_keys, index=unit_keys.index("jigger"),
             format_func=lambda u: UNIT_LABELS[u], key="conv_from",
         )
         conv_to = st.selectbox(
-            "Σε", unit_keys, index=unit_keys.index("ml"),
+            "To", unit_keys, index=unit_keys.index("ml"),
             format_func=lambda u: UNIT_LABELS[u], key="conv_to",
         )
 

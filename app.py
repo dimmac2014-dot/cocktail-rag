@@ -6,6 +6,7 @@ Web app γύρω από το RAG pipeline με τον Jack the Bartender.
 import os
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -105,9 +106,74 @@ def get_weather(city: str):
             "city": resolved_name,
             "temperature": current["temperature_2m"],
             "description": WEATHER_CODES.get(current.get("weather_code"), "άγνωστος καιρός"),
+            "local_time": current.get("time"),  # ISO string, τοπική ώρα της πόλης (timezone=auto)
         }
     except Exception:
         return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# DATETIME CONTEXT (χωρίς API, μηδενικό κόστος)
+# ═══════════════════════════════════════════════════════════════
+
+DAYS_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
+
+SPECIAL_OCCASIONS = {
+    (12, 31): "Παραμονή Πρωτοχρονιάς",
+    (1, 1): "Πρωτοχρονιά",
+    (12, 24): "Παραμονή Χριστουγέννων",
+    (12, 25): "Χριστούγεννα",
+    (2, 14): "Ημέρα του Αγίου Βαλεντίνου",
+    (10, 31): "Halloween",
+    (3, 25): "25η Μαρτίου",
+}
+
+
+def get_datetime_context(local_time_str: str | None = None):
+    """
+    Υπολογίζει context από την ημερομηνία/ώρα -- ημέρα, στιγμή της ημέρας,
+    εποχή, αν είναι Σαββατοκύριακο, και τυχόν ειδική γιορτή.
+    Αν δοθεί local_time_str (ISO string από το Open-Meteo, τοπική ώρα του
+    χρήστη), το χρησιμοποιεί -- αλλιώς πέφτει πίσω στην ώρα του server.
+    Καθαρός υπολογισμός, καμία εξωτερική κλήση.
+    """
+    if local_time_str:
+        try:
+            now = datetime.fromisoformat(local_time_str)
+        except ValueError:
+            now = datetime.now()
+    else:
+        now = datetime.now()
+
+    hour = now.hour
+    if 5 <= hour < 12:
+        time_of_day = "πρωί"
+    elif 12 <= hour < 17:
+        time_of_day = "μεσημέρι"
+    elif 17 <= hour < 23:
+        time_of_day = "βράδυ"
+    else:
+        time_of_day = "νύχτα"
+
+    month = now.month
+    if month in (12, 1, 2):
+        season = "χειμώνας"
+    elif month in (3, 4, 5):
+        season = "άνοιξη"
+    elif month in (6, 7, 8):
+        season = "καλοκαίρι"
+    else:
+        season = "φθινόπωρο"
+
+    weekday_idx = now.weekday()  # 0 = Δευτέρα ... 6 = Κυριακή
+
+    return {
+        "day_of_week": DAYS_EL[weekday_idx],
+        "time_of_day": time_of_day,
+        "season": season,
+        "is_weekend": weekday_idx >= 5,
+        "special_occasion": SPECIAL_OCCASIONS.get((now.month, now.day)),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -297,8 +363,8 @@ def hybrid_search_with_rerank(query, initial_top_k=30, final_top_k=5, filter_dic
     return reranked
 
 
-def generate_bartender_response(question, reranked_matches, weather=None):
-    """Ο Jack απαντάει με βάση τα retrieved recipes (και προαιρετικά τον τρέχοντα καιρό)."""
+def generate_bartender_response(question, reranked_matches, weather=None, dt_context=None):
+    """Ο Jack απαντάει με βάση τα retrieved recipes (και προαιρετικά καιρό + ώρα/ημέρα)."""
     context = "\n\n".join([
         f"[Recipe {i}] {item['match']['metadata']['name']}\n"
         f"Type: {item['match']['metadata']['type']} | Base: {item['match']['metadata']['base_spirit']} | "
@@ -318,10 +384,22 @@ def generate_bartender_response(question, reranked_matches, weather=None):
             f"warming/spirit-forward in cold weather) — but don't force it if the patron already asked for something specific.\n"
         )
 
+    dt_line = ""
+    if dt_context:
+        occasion = dt_context.get("special_occasion")
+        weekend_note = " It's the weekend." if dt_context["is_weekend"] else ""
+        occasion_note = f" Tonight is {occasion} — feel free to suggest something festive if it fits!" if occasion else ""
+        dt_line = (
+            f"\nIt's currently {dt_context['time_of_day']} on a {dt_context['day_of_week']}, in {dt_context['season']}."
+            f"{weekend_note}{occasion_note} "
+            f"Let this subtly inform your tone/suggestion (e.g. lighter for a weekday afternoon, more festive for a "
+            f"weekend evening) — but don't force it if the patron already asked for something specific.\n"
+        )
+
     prompt = f"""You are Jack, a charismatic vintage bartender who has been tending bar since 1914. You have deep knowledge of classic cocktails from the golden age of American bartending. You speak with the warmth and wisdom of an old-school bartender.
 
 A patron approaches your bar and asks: "{question}"
-{weather_line}
+{weather_line}{dt_line}
 You have access to these highly relevant recipes (already filtered and ranked):
 
 {context}
@@ -450,9 +528,14 @@ if ask_button and question:
         if weather:
             st.caption(f"🌤️ {weather['city']}: {weather['temperature']}°C, {weather['description']}")
 
+        # Datetime context (χρησιμοποιεί την τοπική ώρα της πόλης αν έχουμε weather, αλλιώς ώρα server)
+        dt_context = get_datetime_context(weather.get("local_time") if weather else None)
+        occasion_badge = f" • 🎉 {dt_context['special_occasion']}" if dt_context["special_occasion"] else ""
+        st.caption(f"🕒 {dt_context['day_of_week']} {dt_context['time_of_day']}, {dt_context['season']}{occasion_badge}")
+
         # Generate response
         with st.spinner("🎩 Jack is thinking..."):
-            answer, gen_usage = generate_bartender_response(question, reranked, weather)
+            answer, gen_usage = generate_bartender_response(question, reranked, weather, dt_context)
 
         # Display answer
         st.markdown("### 🎩 Jack says:")

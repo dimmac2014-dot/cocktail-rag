@@ -49,17 +49,17 @@ clients = init_clients()
 # ═══════════════════════════════════════════════════════════════
 
 WEATHER_CODES = {
-    0: "αίθριος", 1: "κυρίως αίθριος", 2: "μερική συννεφιά", 3: "συννεφιά",
-    45: "ομίχλη", 48: "παγωμένη ομίχλη",
-    51: "ψιλόβροχο", 53: "ψιλόβροχο", 55: "έντονο ψιλόβροχο",
-    56: "παγωμένο ψιλόβροχο", 57: "έντονο παγωμένο ψιλόβροχο",
-    61: "ελαφριά βροχή", 63: "βροχή", 65: "δυνατή βροχή",
-    66: "παγωμένη βροχή", 67: "δυνατή παγωμένη βροχή",
-    71: "ελαφριά χιονόπτωση", 73: "χιονόπτωση", 75: "δυνατή χιονόπτωση",
-    77: "χιονόκοκκοι",
-    80: "μπόρες", 81: "δυνατές μπόρες", 82: "καταιγιδώδεις μπόρες",
-    85: "χιονομπόρες", 86: "δυνατές χιονομπόρες",
-    95: "καταιγίδα", 96: "καταιγίδα με χαλάζι", 99: "ισχυρή καταιγίδα με χαλάζι",
+    0: "clear sky", 1: "mostly clear", 2: "partly cloudy", 3: "cloudy",
+    45: "fog", 48: "freezing fog",
+    51: "light drizzle", 53: "drizzle", 55: "dense drizzle",
+    56: "freezing drizzle", 57: "dense freezing drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain",
+    66: "freezing rain", 67: "heavy freezing rain",
+    71: "light snow", 73: "snow", 75: "heavy snow",
+    77: "snow grains",
+    80: "rain showers", 81: "heavy rain showers", 82: "violent rain showers",
+    85: "snow showers", 86: "heavy snow showers",
+    95: "thunderstorm", 96: "thunderstorm with hail", 99: "severe thunderstorm with hail",
 }
 
 
@@ -76,7 +76,7 @@ def get_weather(city: str):
     try:
         geo = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": city.strip(), "count": 1, "language": "el", "format": "json"},
+            params={"name": city.strip(), "count": 1, "language": "en", "format": "json"},
             timeout=5,
         ).json()
 
@@ -105,7 +105,7 @@ def get_weather(city: str):
         return {
             "city": resolved_name,
             "temperature": current["temperature_2m"],
-            "description": WEATHER_CODES.get(current.get("weather_code"), "άγνωστος καιρός"),
+            "description": WEATHER_CODES.get(current.get("weather_code"), "unknown weather"),
             "local_time": current.get("time"),  # ISO string, τοπική ώρα της πόλης (timezone=auto)
         }
     except Exception:
@@ -116,16 +116,16 @@ def get_weather(city: str):
 # DATETIME CONTEXT (χωρίς API, μηδενικό κόστος)
 # ═══════════════════════════════════════════════════════════════
 
-DAYS_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
+DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 SPECIAL_OCCASIONS = {
-    (12, 31): "Παραμονή Πρωτοχρονιάς",
-    (1, 1): "Πρωτοχρονιά",
-    (12, 24): "Παραμονή Χριστουγέννων",
-    (12, 25): "Χριστούγεννα",
-    (2, 14): "Ημέρα του Αγίου Βαλεντίνου",
+    (12, 31): "New Year's Eve",
+    (1, 1): "New Year's Day",
+    (12, 24): "Christmas Eve",
+    (12, 25): "Christmas",
+    (2, 14): "Valentine's Day",
     (10, 31): "Halloween",
-    (3, 25): "25η Μαρτίου",
+    (3, 25): "Greek Independence Day",
 }
 
 
@@ -147,28 +147,28 @@ def get_datetime_context(local_time_str: str | None = None):
 
     hour = now.hour
     if 5 <= hour < 12:
-        time_of_day = "πρωί"
+        time_of_day = "morning"
     elif 12 <= hour < 17:
-        time_of_day = "μεσημέρι"
+        time_of_day = "afternoon"
     elif 17 <= hour < 23:
-        time_of_day = "βράδυ"
+        time_of_day = "evening"
     else:
-        time_of_day = "νύχτα"
+        time_of_day = "night"
 
     month = now.month
     if month in (12, 1, 2):
-        season = "χειμώνας"
+        season = "winter"
     elif month in (3, 4, 5):
-        season = "άνοιξη"
+        season = "spring"
     elif month in (6, 7, 8):
-        season = "καλοκαίρι"
+        season = "summer"
     else:
-        season = "φθινόπωρο"
+        season = "autumn"
 
-    weekday_idx = now.weekday()  # 0 = Δευτέρα ... 6 = Κυριακή
+    weekday_idx = now.weekday()  # 0 = Monday ... 6 = Sunday
 
     return {
-        "day_of_week": DAYS_EL[weekday_idx],
+        "day_of_week": DAYS_EN[weekday_idx],
         "time_of_day": time_of_day,
         "season": season,
         "is_weekend": weekday_idx >= 5,
@@ -454,9 +454,9 @@ with st.sidebar:
         """
     )
     st.divider()
-    st.subheader("📍 Ο καιρός σου")
+    st.subheader("📍 Your Weather")
     weather_city = st.text_input(
-        "Πόλη (για context-aware προτάσεις)",
+        "City (for context-aware suggestions)",
         value="Athens",
         key="weather_city",
     )

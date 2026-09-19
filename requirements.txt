@@ -4,3 +4,4 @@ openai
 pinecone
 cohere
 python-dotenv
+requests

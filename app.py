@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path
 
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -40,6 +41,73 @@ def init_clients():
 
 
 clients = init_clients()
+
+
+# ═══════════════════════════════════════════════════════════════
+# WEATHER (Open-Meteo — δωρεάν, χωρίς API key)
+# ═══════════════════════════════════════════════════════════════
+
+WEATHER_CODES = {
+    0: "αίθριος", 1: "κυρίως αίθριος", 2: "μερική συννεφιά", 3: "συννεφιά",
+    45: "ομίχλη", 48: "παγωμένη ομίχλη",
+    51: "ψιλόβροχο", 53: "ψιλόβροχο", 55: "έντονο ψιλόβροχο",
+    56: "παγωμένο ψιλόβροχο", 57: "έντονο παγωμένο ψιλόβροχο",
+    61: "ελαφριά βροχή", 63: "βροχή", 65: "δυνατή βροχή",
+    66: "παγωμένη βροχή", 67: "δυνατή παγωμένη βροχή",
+    71: "ελαφριά χιονόπτωση", 73: "χιονόπτωση", 75: "δυνατή χιονόπτωση",
+    77: "χιονόκοκκοι",
+    80: "μπόρες", 81: "δυνατές μπόρες", 82: "καταιγιδώδεις μπόρες",
+    85: "χιονομπόρες", 86: "δυνατές χιονομπόρες",
+    95: "καταιγίδα", 96: "καταιγίδα με χαλάζι", 99: "ισχυρή καταιγίδα με χαλάζι",
+}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_weather(city: str):
+    """
+    Φέρνει τον τρέχοντα καιρό για μια πόλη μέσω Open-Meteo.
+    Επιστρέφει dict {city, temperature, description} ή None αν κάτι πάει στραβά
+    (άγνωστη πόλη, timeout, API down) — ποτέ δεν σκάει, απλά αγνοείται το weather context.
+    """
+    if not city or not city.strip():
+        return None
+
+    try:
+        geo = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city.strip(), "count": 1, "language": "el", "format": "json"},
+            timeout=5,
+        ).json()
+
+        results = geo.get("results")
+        if not results:
+            return None
+
+        lat, lon = results[0]["latitude"], results[0]["longitude"]
+        resolved_name = results[0]["name"]
+
+        forecast = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,weather_code",
+                "timezone": "auto",
+            },
+            timeout=5,
+        ).json()
+
+        current = forecast.get("current")
+        if not current or current.get("temperature_2m") is None:
+            return None
+
+        return {
+            "city": resolved_name,
+            "temperature": current["temperature_2m"],
+            "description": WEATHER_CODES.get(current.get("weather_code"), "άγνωστος καιρός"),
+        }
+    except Exception:
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -188,8 +256,8 @@ def hybrid_search_with_rerank(query, initial_top_k=30, final_top_k=5, filter_dic
     return reranked
 
 
-def generate_bartender_response(question, reranked_matches):
-    """Ο Jack απαντάει με βάση τα retrieved recipes."""
+def generate_bartender_response(question, reranked_matches, weather=None):
+    """Ο Jack απαντάει με βάση τα retrieved recipes (και προαιρετικά τον τρέχοντα καιρό)."""
     context = "\n\n".join([
         f"[Recipe {i}] {item['match']['metadata']['name']}\n"
         f"Type: {item['match']['metadata']['type']} | Base: {item['match']['metadata']['base_spirit']} | "
@@ -200,10 +268,19 @@ def generate_bartender_response(question, reranked_matches):
         for i, item in enumerate(reranked_matches, 1)
     ])
 
+    weather_line = ""
+    if weather:
+        weather_line = (
+            f'\nRight now, where the patron is ({weather["city"]}), the weather is '
+            f'{weather["temperature"]}°C and {weather["description"]}. '
+            f"Let this subtly influence your recommendation (e.g. lean refreshing/citrus/lower-ABV in hot weather, "
+            f"warming/spirit-forward in cold weather) — but don't force it if the patron already asked for something specific.\n"
+        )
+
     prompt = f"""You are Jack, a charismatic vintage bartender who has been tending bar since 1914. You have deep knowledge of classic cocktails from the golden age of American bartending. You speak with the warmth and wisdom of an old-school bartender.
 
 A patron approaches your bar and asks: "{question}"
-
+{weather_line}
 You have access to these highly relevant recipes (already filtered and ranked):
 
 {context}
@@ -258,6 +335,13 @@ with st.sidebar:
         """
     )
     st.divider()
+    st.subheader("📍 Ο καιρός σου")
+    weather_city = st.text_input(
+        "Πόλη (για context-aware προτάσεις)",
+        value="Athens",
+        key="weather_city",
+    )
+    st.divider()
     st.caption("Powered by Anthropic • OpenAI • Pinecone • Cohere • LlamaCloud")
 
 # Main input
@@ -300,9 +384,14 @@ if ask_button and question:
     if not reranked:
         st.error("😔 Sorry, no matching recipes found.")
     else:
+        # Weather context (προαιρετικό — αν αποτύχει, απλά αγνοείται)
+        weather = get_weather(st.session_state.get("weather_city", "Athens"))
+        if weather:
+            st.caption(f"🌤️ {weather['city']}: {weather['temperature']}°C, {weather['description']}")
+
         # Generate response
         with st.spinner("🎩 Jack is thinking..."):
-            answer, gen_usage = generate_bartender_response(question, reranked)
+            answer, gen_usage = generate_bartender_response(question, reranked, weather)
 
         # Display answer
         st.markdown("### 🎩 Jack says:")
